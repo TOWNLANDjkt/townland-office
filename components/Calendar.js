@@ -2,10 +2,42 @@ import { useState } from 'react'
 import {
   format, startOfMonth, endOfMonth, startOfWeek, endOfWeek,
   addDays, addMonths, subMonths, isSameMonth, isSameDay, isToday,
+  parseISO, isWithinInterval,
 } from 'date-fns'
 import { id } from 'date-fns/locale'
 
 const DAYS = ['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min']
+
+// Expand range events: each event has date_start & date_end (or just date for single-day)
+// Returns events that cover a given day d
+function getEventsForDay(events, d) {
+  return events.filter(e => {
+    const start = parseISO(e.date_start || e.date)
+    const end = parseISO(e.date_end || e.date_start || e.date)
+    try {
+      return isWithinInterval(d, { start, end })
+    } catch {
+      return isSameDay(start, d)
+    }
+  })
+}
+
+// Is this the first day of the event range?
+function isRangeStart(ev, d) {
+  return isSameDay(parseISO(ev.date_start || ev.date), d)
+}
+
+// Is this the last day of the event range?
+function isRangeEnd(ev, d) {
+  const end = parseISO(ev.date_end || ev.date_start || ev.date)
+  return isSameDay(end, d)
+}
+
+// Is this a multi-day event?
+function isMultiDay(ev) {
+  if (!ev.date_end) return false
+  return ev.date_end !== (ev.date_start || ev.date)
+}
 
 export default function Calendar({ events = [], onDayClick }) {
   const [current, setCurrent] = useState(new Date())
@@ -22,9 +54,6 @@ export default function Calendar({ events = [], onDayClick }) {
     day = addDays(day, 1)
   }
 
-  const getEventsForDay = (d) =>
-    events.filter(e => isSameDay(new Date(e.date), d))
-
   return (
     <div>
       {/* Month nav */}
@@ -33,7 +62,7 @@ export default function Calendar({ events = [], onDayClick }) {
         <span style={{ fontSize: 15, fontWeight: 500, minWidth: 130, textAlign: 'center' }}>
           {format(current, 'MMMM yyyy', { locale: id })}
         </span>
-        <button onClick={() => addMonths(current, 0) && setCurrent(addMonths(current, 1))} style={btnStyle}>›</button>
+        <button onClick={() => setCurrent(addMonths(current, 1))} style={btnStyle}>›</button>
         <button onClick={() => setCurrent(new Date())} style={{ ...btnStyle, marginLeft: 4, fontSize: 11, color: '#888' }}>
           Hari ini
         </button>
@@ -63,7 +92,7 @@ export default function Calendar({ events = [], onDayClick }) {
 
         {/* Days */}
         {days.map((d, i) => {
-          const dayEvents = getEventsForDay(d)
+          const dayEvents = getEventsForDay(events, d)
           const inMonth = isSameMonth(d, current)
           const today = isToday(d)
           return (
@@ -73,12 +102,13 @@ export default function Calendar({ events = [], onDayClick }) {
               style={{
                 background: inMonth ? '#fff' : '#f9f9f7',
                 minHeight: 80,
-                padding: '6px 6px 4px',
+                padding: '6px 0 4px',
                 cursor: onDayClick ? 'pointer' : 'default',
                 transition: 'background 0.1s',
+                position: 'relative',
               }}
               onMouseEnter={e => { if (inMonth) e.currentTarget.style.background = '#fafaf8' }}
-              onMouseLeave={e => { if (inMonth) e.currentTarget.style.background = inMonth ? '#fff' : '#f9f9f7' }}
+              onMouseLeave={e => { e.currentTarget.style.background = inMonth ? '#fff' : '#f9f9f7' }}
             >
               <div style={{
                 width: 22, height: 22,
@@ -89,26 +119,44 @@ export default function Calendar({ events = [], onDayClick }) {
                 fontWeight: today ? 600 : 400,
                 color: today ? '#fff' : inMonth ? '#333' : '#bbb',
                 marginBottom: 3,
+                marginLeft: 6,
               }}>
                 {format(d, 'd')}
               </div>
-              {dayEvents.slice(0, 3).map((ev, idx) => (
-                <div key={idx} style={{
-                  borderRadius: 3,
-                  padding: '1px 5px',
-                  fontSize: 10,
-                  marginBottom: 2,
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  background: ev.type === 'komputer' ? '#FCEBEB' : '#E1F5EE',
-                  color: ev.type === 'komputer' ? '#791F1F' : '#085041',
-                }}>
-                  {ev.label}
-                </div>
-              ))}
+
+              {dayEvents.slice(0, 3).map((ev, idx) => {
+                const multi = isMultiDay(ev)
+                const start = multi && isRangeStart(ev, d)
+                const end = multi && isRangeEnd(ev, d)
+                const mid = multi && !start && !end
+                const isKomp = ev.type === 'komputer'
+                const bg = isKomp ? '#FCEBEB' : '#E1F5EE'
+                const color = isKomp ? '#791F1F' : '#085041'
+
+                return (
+                  <div key={idx} style={{
+                    fontSize: 10,
+                    marginBottom: 2,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    background: bg,
+                    color,
+                    // Range pill style
+                    borderRadius: start ? '3px 0 0 3px' : end ? '0 3px 3px 0' : mid ? '0' : '3px',
+                    marginLeft: start || !multi ? 4 : 0,
+                    marginRight: end || !multi ? 4 : 0,
+                    padding: start ? '1px 4px 1px 5px' : mid ? '1px 0' : '1px 5px 1px 4px',
+                    // Mid segments: slightly dimmer background
+                    opacity: mid ? 0.85 : 1,
+                  }}>
+                    {/* Only show label on the start day */}
+                    {(start || !multi) ? ev.label : '\u00A0'}
+                  </div>
+                )
+              })}
               {dayEvents.length > 3 && (
-                <div style={{ fontSize: 9, color: '#aaa' }}>+{dayEvents.length - 3} lagi</div>
+                <div style={{ fontSize: 9, color: '#aaa', paddingLeft: 6 }}>+{dayEvents.length - 3} lagi</div>
               )}
             </div>
           )
@@ -117,14 +165,14 @@ export default function Calendar({ events = [], onDayClick }) {
 
       {/* Legend */}
       <div style={{ display: 'flex', gap: 16, marginTop: 12 }}>
-        <LegendDot color="#FCEBEB" border="#f09595" textColor="#791F1F" label="Komputer 3D" />
-        <LegendDot color="#E1F5EE" border="#5DCAA5" textColor="#085041" label="Assistant" />
+        <LegendDot color="#FCEBEB" border="#f09595" label="Komputer 3D" />
+        <LegendDot color="#E1F5EE" border="#5DCAA5" label="Assistant" />
       </div>
     </div>
   )
 }
 
-function LegendDot({ color, border, textColor, label }) {
+function LegendDot({ color, border, label }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
       <div style={{ width: 10, height: 10, borderRadius: 2, background: color, border: `0.5px solid ${border}` }} />
