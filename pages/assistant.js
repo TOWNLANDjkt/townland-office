@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import Layout from '../components/Layout'
 import Calendar from '../components/Calendar'
 import Modal from '../components/Modal'
+import PMAutocomplete from '../components/PMAutocomplete'
 import { supabase } from '../lib/supabase'
 import { format } from 'date-fns'
 
@@ -28,7 +29,8 @@ export default function AssistantPage() {
 
   function openNew(day) {
     setEditItem(null)
-    setForm({ assistant_id: '', kode_pm: '', nama_project: '', tanggal: day ? format(day, 'yyyy-MM-dd') : '', tanggal_selesai: '', catatan: '' })
+    const dateStr = day ? format(day, 'yyyy-MM-dd') : ''
+    setForm({ assistant_id: '', kode_pm: '', nama_project: '', tanggal: dateStr, tanggal_selesai: dateStr, catatan: '' })
     setModalOpen(true)
   }
 
@@ -39,7 +41,7 @@ export default function AssistantPage() {
       kode_pm: item.kode_pm,
       nama_project: item.nama_project || '',
       tanggal: item.tanggal,
-      tanggal_selesai: item.tanggal_selesai || '',
+      tanggal_selesai: item.tanggal_selesai || item.tanggal,
       catatan: item.catatan || '',
     })
     setModalOpen(true)
@@ -47,11 +49,12 @@ export default function AssistantPage() {
 
   async function handleSave() {
     if (!form.assistant_id || !form.kode_pm || !form.tanggal) return alert('Assistant, Kode PM, dan tanggal wajib diisi')
+    const payload = { ...form, tanggal_selesai: form.tanggal_selesai || form.tanggal }
     setSaving(true)
     if (editItem) {
-      await supabase.from('assistant_assignments').update(form).eq('id', editItem.id)
+      await supabase.from('assistant_assignments').update(payload).eq('id', editItem.id)
     } else {
-      await supabase.from('assistant_assignments').insert(form)
+      await supabase.from('assistant_assignments').insert(payload)
     }
     setSaving(false)
     setModalOpen(false)
@@ -65,30 +68,28 @@ export default function AssistantPage() {
   }
 
   const events = assignments.map(a => ({
-    date: a.tanggal,
+    date_start: a.tanggal,
+    date_end: a.tanggal_selesai || a.tanggal,
     type: 'assistant',
-    label: `${a.kode_pm} — Asst. ${a.assistants?.nama || '?'}`,
+    label: `${a.kode_pm} — ${a.assistants?.nama || '?'}`,
   }))
 
   const filtered = filterAsst === 'all'
     ? assignments
     : assignments.filter(a => String(a.assistant_id) === filterAsst)
 
-  // Status per assistant (today)
   const todayStr = format(new Date(), 'yyyy-MM-dd')
   function getStatus(asstId) {
-    const busy = assignments.find(a =>
+    return assignments.find(a =>
       String(a.assistant_id) === String(asstId) &&
       a.tanggal <= todayStr &&
-      (!a.tanggal_selesai || a.tanggal_selesai >= todayStr)
-    )
-    return busy || null
+      (a.tanggal_selesai || a.tanggal) >= todayStr
+    ) || null
   }
 
   return (
     <Layout title="Assistant">
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 24, alignItems: 'start' }}>
-        {/* Calendar */}
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <p style={{ fontSize: 13, color: '#888' }}>Klik tanggal untuk assign assistant</p>
@@ -97,9 +98,8 @@ export default function AssistantPage() {
           <Calendar events={events} onDayClick={openNew} />
         </div>
 
-        {/* Right panel */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {/* Status cards */}
+          {/* Status today */}
           <div style={{ background: '#fff', border: '0.5px solid #e5e5e5', borderRadius: 10, padding: '14px 16px' }}>
             <div style={sectionTitle}>Status Hari Ini</div>
             {loading ? <div style={emptyMsg}>Memuat...</div> : assistants.map(a => {
@@ -115,9 +115,7 @@ export default function AssistantPage() {
                       </div>
                     )}
                   </div>
-                  <span style={status ? busyBadge : freeBadge}>
-                    {status ? 'Sibuk' : 'Bebas'}
-                  </span>
+                  <span style={status ? busyBadge : freeBadge}>{status ? 'Sibuk' : 'Bebas'}</span>
                 </div>
               )
             })}
@@ -129,9 +127,7 @@ export default function AssistantPage() {
               <div style={sectionTitle}>Semua Assignment</div>
               <select value={filterAsst} onChange={e => setFilterAsst(e.target.value)} style={selectStyle}>
                 <option value="all">Semua assistant</option>
-                {assistants.map(a => (
-                  <option key={a.id} value={String(a.id)}>{a.nama}</option>
-                ))}
+                {assistants.map(a => <option key={a.id} value={String(a.id)}>{a.nama}</option>)}
               </select>
             </div>
             <div style={{ maxHeight: 360, overflowY: 'auto' }}>
@@ -149,7 +145,7 @@ export default function AssistantPage() {
                       </div>
                       <div style={{ fontSize: 12, color: '#555' }}>{a.nama_project || '—'}</div>
                       <div style={{ fontSize: 11, color: '#aaa' }}>
-                        {a.tanggal}{a.tanggal_selesai ? ` s/d ${a.tanggal_selesai}` : ''}
+                        {a.tanggal}{a.tanggal_selesai && a.tanggal_selesai !== a.tanggal ? ` s/d ${a.tanggal_selesai}` : ''}
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: 5 }}>
@@ -164,54 +160,34 @@ export default function AssistantPage() {
         </div>
       </div>
 
-      {/* Modal */}
       <Modal open={modalOpen} onClose={() => setModalOpen(false)} title={editItem ? 'Edit Assignment' : 'Assign Assistant'}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <Field label="Assistant *">
             <select value={form.assistant_id} onChange={e => setForm({ ...form, assistant_id: e.target.value })} style={inputStyle}>
               <option value="">Pilih assistant...</option>
-              {assistants.map(a => (
-                <option key={a.id} value={a.id}>{a.nama} ({a.tipe})</option>
-              ))}
+              {assistants.map(a => <option key={a.id} value={a.id}>{a.nama} ({a.tipe})</option>)}
             </select>
           </Field>
           <Field label="Kode PM *">
-            <input
-              placeholder="contoh: ARN"
-              value={form.kode_pm}
-              onChange={e => setForm({ ...form, kode_pm: e.target.value.toUpperCase() })}
-              style={inputStyle}
-            />
+            <PMAutocomplete value={form.kode_pm} onChange={val => setForm({ ...form, kode_pm: val })} inputStyle={inputStyle} />
           </Field>
           <Field label="Nama Project">
-            <input
-              placeholder="contoh: BSD Cluster"
-              value={form.nama_project}
-              onChange={e => setForm({ ...form, nama_project: e.target.value })}
-              style={inputStyle}
-            />
+            <input placeholder="contoh: BSD Cluster" value={form.nama_project} onChange={e => setForm({ ...form, nama_project: e.target.value })} style={inputStyle} />
           </Field>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <Field label="Tanggal Mulai *">
               <input type="date" value={form.tanggal} onChange={e => setForm({ ...form, tanggal: e.target.value })} style={inputStyle} />
             </Field>
             <Field label="Tanggal Selesai">
-              <input type="date" value={form.tanggal_selesai} onChange={e => setForm({ ...form, tanggal_selesai: e.target.value })} style={inputStyle} />
+              <input type="date" value={form.tanggal_selesai} min={form.tanggal} onChange={e => setForm({ ...form, tanggal_selesai: e.target.value })} style={inputStyle} />
             </Field>
           </div>
           <Field label="Catatan">
-            <textarea
-              placeholder="Catatan tambahan..."
-              value={form.catatan}
-              onChange={e => setForm({ ...form, catatan: e.target.value })}
-              style={{ ...inputStyle, minHeight: 60, resize: 'vertical' }}
-            />
+            <textarea placeholder="Catatan tambahan..." value={form.catatan} onChange={e => setForm({ ...form, catatan: e.target.value })} style={{ ...inputStyle, minHeight: 60, resize: 'vertical' }} />
           </Field>
           <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
             <button onClick={() => setModalOpen(false)} style={cancelBtn}>Batal</button>
-            <button onClick={handleSave} disabled={saving} style={greenBtn}>
-              {saving ? 'Menyimpan...' : 'Simpan'}
-            </button>
+            <button onClick={handleSave} disabled={saving} style={greenBtn}>{saving ? 'Menyimpan...' : 'Simpan'}</button>
           </div>
         </div>
       </Modal>
